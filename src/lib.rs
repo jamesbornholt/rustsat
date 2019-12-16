@@ -6,7 +6,7 @@ extern crate quickcheck_macros;
 
 mod brute_force;
 
-use std::fmt::{Debug, Display, Error, Formatter};
+use std::fmt::{Debug, Error, Formatter};
 
 #[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Debug)]
 pub struct Variable(pub usize);
@@ -352,7 +352,7 @@ mod tests {
     use super::*;
     use brute_force::solve_brute_force;
     use quickcheck::{Arbitrary, Gen};
-    use rand::{Rng, RngCore};
+    //    use rand::{Rng, RngCore};
     use std::collections::HashMap;
 
     fn p(x: usize) -> Literal {

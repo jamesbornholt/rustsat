@@ -1,3 +1,4 @@
+#[cfg(test)]
 use crate::*;
 
 // Simple brute-force implementation for use in QuickCheck
@@ -55,7 +56,6 @@ mod tests {
         let c3 = Clause::new(vec![n(1)]);
         let f = Formula::new(vec![c1, c2, c3]);
 
-        let mut solver = Solver::new(&f);
         assert_eq!(solve_brute_force(&f), SatResult::Unsatisfiable);
     }
 
@@ -65,7 +65,6 @@ mod tests {
         let c2 = Clause::new(vec![p(0)]);
         let f = Formula::new(vec![c1, c2]);
 
-        let mut solver = Solver::new(&f);
         assert_eq!(solve_brute_force(&f), SatResult::Satisfiable);
     }
 
@@ -76,7 +75,6 @@ mod tests {
         let c3 = Clause::new(vec![n(1), n(2)]);
         let f = Formula::new(vec![c1, c2, c3]);
 
-        let mut solver = Solver::new(&f);
         assert_eq!(solve_brute_force(&f), SatResult::Satisfiable);
     }
 
@@ -87,7 +85,6 @@ mod tests {
         let c3 = Clause::new(vec![n(1)]);
         let f = Formula::new(vec![c1, c2, c3]);
 
-        let mut solver = Solver::new(&f);
         assert_eq!(solve_brute_force(&f), SatResult::Unsatisfiable);
     }
 }
