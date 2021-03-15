@@ -1,7 +1,7 @@
 #[cfg(test)]
 extern crate quickcheck;
 
-mod formula;
+pub mod formula;
 mod solver;
 
 #[cfg(test)]
@@ -13,7 +13,6 @@ pub enum SatResult {
     Unsatisfiable,
 }
 
-pub use formula::{Clause, Formula, Literal, Variable};
 pub use solver::Solver;
 
 #[cfg(test)]
@@ -158,6 +157,8 @@ mod tests {
             solver == brute_force
         }
 
-        QuickCheck::new().tests(1000).quickcheck(solver_eq_brute_force as fn(Formula) -> bool);
+        QuickCheck::new()
+            .tests(1000)
+            .quickcheck(solver_eq_brute_force as fn(Formula) -> bool);
     }
 }

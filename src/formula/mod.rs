@@ -1,3 +1,5 @@
+pub mod dimacs;
+
 use std::fmt::Debug;
 use std::fmt::{self, Formatter};
 
