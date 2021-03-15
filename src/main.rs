@@ -5,7 +5,7 @@ fn main() {
     let c2 = Clause::new(vec![Literal::Negative(Variable(0))]);
     let f = Formula::new(vec![c1, c2]);
 
-    let mut solver = Solver::new(&f);
+    let mut solver = Solver::new(f);
 
     let exit_code = match solver.solve() {
         SatResult::Satisfiable => 0,

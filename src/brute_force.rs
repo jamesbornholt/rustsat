@@ -1,19 +1,18 @@
-#[cfg(test)]
-use crate::*;
+use crate::formula::Formula;
+use crate::SatResult;
 
-// Simple brute-force implementation for use in QuickCheck
-#[cfg(test)]
+/// Simple brute-force solver implementation for use in tests
 pub(crate) fn solve_brute_force(f: &Formula) -> SatResult {
     let num_variables = f.num_variables();
-    assert!(num_variables <= 15); // just for safety
+    assert!(num_variables <= 15); // just for safety; this is a very bad solver!
 
     fn assignment_for(assignment: u32, x: usize) -> bool {
         assignment & (1 << x) == 0
     }
 
     'search: for assignment in 0..2u32.pow(num_variables as u32) {
-        'clauses: for clause in &f.clauses {
-            for literal in &clause.literals {
+        'clauses: for clause in f.clauses() {
+            for literal in clause.literals() {
                 if assignment_for(assignment, literal.idx()) == literal.is_positive() {
                     // this clause is satisfied, let's go to the next one
                     continue 'clauses;
@@ -31,6 +30,8 @@ pub(crate) fn solve_brute_force(f: &Formula) -> SatResult {
 
 #[cfg(test)]
 mod tests {
+    use crate::formula::{Clause, Literal, Variable};
+
     use super::*;
 
     fn p(x: usize) -> Literal {
