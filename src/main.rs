@@ -5,6 +5,8 @@ use rustsat::*;
 use std::fs::File;
 
 fn main() {
+    env_logger::init();
+
     let matches = App::new("solver")
         .arg(Arg::with_name("INPUT").help("input file (in CNF)").index(1))
         .get_matches();

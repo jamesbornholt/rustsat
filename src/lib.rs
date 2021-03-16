@@ -1,4 +1,7 @@
 //! A stupid little SAT solver, mostly for fooling around with Rust stuff.
+//!
+//! Currently this is an implementation of DPLL with chronological backtracking, implemented via
+//! clause learning.
 
 pub mod formula;
 mod solver;
@@ -22,6 +25,7 @@ mod tests {
     use brute_force::solve_brute_force;
     use quickcheck::{Arbitrary, Gen, QuickCheck};
     use std::collections::HashMap;
+    use test_env_log::test;
 
     fn p(x: usize) -> Literal {
         Literal::Positive(Variable(x))
@@ -128,12 +132,14 @@ mod tests {
     impl Arbitrary for Formula {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
             const MAX_VARS: u32 = 15;
-            const MAX_CLAUSES: u32 = 10;
+            const MAX_CLAUSE_FACTOR: u32 = 9;
+
             let num_vars = g.next_u32() % MAX_VARS + 1;
-            let num_clauses = g.next_u32() % MAX_CLAUSES + 1;
+            let clause_factor = g.next_u32() % MAX_CLAUSE_FACTOR + 1;
+            let num_clauses = num_vars * clause_factor;
 
             let f = Formula::new((0..num_clauses).map(|_| {
-                let clause_size = g.next_u32() % num_vars + 1;
+                let clause_size = 3;
                 Clause::new((0..clause_size).map(|_| {
                     let var = Variable((g.next_u32() % num_vars) as usize);
                     if g.next_u32() % 2 == 0 {
@@ -153,6 +159,7 @@ mod tests {
         fn solver_eq_brute_force(f: Formula) -> bool {
             let brute_force = solve_brute_force(&f);
             let solver = Solver::new(f).solve();
+            log::trace!("result = {:?}", solver);
             solver == brute_force
         }
 

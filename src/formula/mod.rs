@@ -3,10 +3,16 @@ pub mod dimacs;
 use std::fmt::Debug;
 use std::fmt::{self, Formatter};
 
-#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq)]
 pub struct Variable(pub usize);
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+impl Debug for Variable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub enum Literal {
     Positive(Variable),
     Negative(Variable),
@@ -39,7 +45,16 @@ impl Literal {
     }
 }
 
-#[derive(Clone, Debug)]
+impl Debug for Literal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Literal::Positive(v) => write!(f, "{:?}", v),
+            Literal::Negative(v) => write!(f, "!{:?}", v),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct Clause {
     literals: Vec<Literal>,
 }
@@ -53,6 +68,21 @@ impl Clause {
 
     pub fn literals(&self) -> impl Iterator<Item = &Literal> {
         self.literals.iter()
+    }
+}
+
+impl Debug for Clause {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut first_literal = true;
+        write!(f, "(")?;
+        for l in &self.literals {
+            if !first_literal {
+                write!(f, " | ")?;
+            }
+            first_literal = false;
+            write!(f, "{:?}", l)?;
+        }
+        write!(f, ")")
     }
 }
 
@@ -99,29 +129,11 @@ impl Debug for Formula {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         let mut first_clause = true;
         for clause in &self.clauses {
-            if first_clause {
-                first_clause = false;
-            } else {
-                f.write_str(" & ")?;
+            if !first_clause {
+                write!(f, " & ")?;
             }
-            if clause.literals.len() > 1 {
-                f.write_str("(")?;
-            }
-            let mut first_literal = true;
-            for literal in &clause.literals {
-                if first_literal {
-                    first_literal = false;
-                } else {
-                    f.write_str(" | ")?;
-                }
-                match literal {
-                    Literal::Positive(Variable(x)) => f.write_fmt(format_args!("{}", x))?,
-                    Literal::Negative(Variable(x)) => f.write_fmt(format_args!("!{}", x))?,
-                }
-            }
-            if clause.literals.len() > 1 {
-                f.write_str(")")?;
-            }
+            first_clause = false;
+            write!(f, "{:?}", clause)?;
         }
         Ok(())
     }

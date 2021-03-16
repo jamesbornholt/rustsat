@@ -1,5 +1,6 @@
 use crate::formula::{Clause, Formula, Literal, Variable};
 use crate::SatResult;
+use log::trace;
 
 #[derive(Debug)]
 struct Decision {
@@ -66,12 +67,21 @@ impl SolverState {
     fn assign(&mut self, literal: &Literal, implied: bool) {
         assert_eq!(self.assignment[literal.idx()], Assignment::Undecided);
         assert!(implied || self.decision_level > DecisionLevel(0));
+
+        trace!(
+            "{} {:?} at level {:?}",
+            if implied { "implied" } else { "decision" },
+            literal,
+            self.decision_level
+        );
+
         let decision = Decision {
             literal: literal.clone(),
             level: self.decision_level,
             implied,
         };
         self.decisions.push(decision);
+
         self.assignment[literal.idx()] = if literal.is_positive() {
             Assignment::True
         } else {
@@ -168,8 +178,9 @@ impl Solver {
     }
 
     fn decide(&self) -> Option<Literal> {
-        // TODO a less stupid heuristic
-        // for now: just enumerate variables looking for one that's unassigned
+        // TODO a less stupid heuristic. for now, just enumerate variables looking for one that's unassigned
+        // why is it complete to only return positive assignments? because [`analyze_conflict`] will generate a conflict
+        // clause that will reverse this decision if it's involved in a conflict.
         for (i, assignment) in self.state.assignment.iter().enumerate() {
             if *assignment == Assignment::Undecided {
                 return Some(Literal::Positive(Variable(i)));
@@ -181,31 +192,43 @@ impl Solver {
     fn analyze_conflict(&mut self) -> Option<Backtrack> {
         // Invariant: self.bcp() returned conflict
         // Invariant: self.state.decisions is not empty, and contains at least one non-implied decision
+
         // TODO better conflict analysis
         // for now: the most recent decision was wrong. so we:
         // (a) generate a conflict clause ruling out everything up to and including that decision
         //     (and therefore that clause will become unit immediately after backtracking)
         // (b) return the level right before that one
-
         // If there are no non-implied decisions, our conflict is at level 0, so we return None
         // (nowhere to backtrack to)
-        let (idx, last_decision) = self
+        let (decision_index, last_decision)= self
             .state
             .decisions
             .iter()
             .enumerate()
-            .filter(|(_i, decision)| !decision.implied)
-            .last()?;
-        // The conflict clause negates everything up to and including the last non-implied decision
-        let conflict_decisions = &self.state.decisions[..=idx];
-        let conflict_clause_vec = conflict_decisions.iter().map(|decision| decision.negated());
-        let conflict_clause = Clause::new(conflict_clause_vec);
+            .rev()
+            .find(|(_i, decision)| !decision.implied)?;
+
+        // The conflict clause negates every non-implied decision up to and including the latest one
+        let conflict_clause = self
+            .state
+            .decisions
+            .iter()
+            .take(decision_index + 1)
+            .filter(|d| !d.implied)
+            .map(|d| d.negated());
+        let conflict_clause = Clause::new(conflict_clause);
+        trace!(
+            "backtracking to {:?}, learned clause {:?}",
+            last_decision.level.0 - 1,
+            conflict_clause
+        );
         self.clauses.push(conflict_clause);
+
         // All non-implied decisions are above level 0, so the subtraction is safe
         assert!(last_decision.level > DecisionLevel(0));
         Some(Backtrack {
-            level: DecisionLevel(last_decision.level.0 - 1),
-            decision_index: idx,
+            level: DecisionLevel(last_decision.level.0.saturating_sub(1)),
+            decision_index,
         })
     }
 
@@ -215,5 +238,6 @@ impl Solver {
         for decision in &dropped {
             self.state.assignment[decision.literal.idx()] = Assignment::Undecided;
         }
+        self.state.decision_level = backtrack.level;
     }
 }

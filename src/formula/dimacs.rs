@@ -87,9 +87,9 @@ impl From<std::io::Error> for DimacsParseError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{SatResult, Solver};
-
     use super::*;
+    use crate::{SatResult, Solver};
+    use test_env_log::test;
 
     fn p(x: usize) -> Literal {
         Literal::Positive(Variable(x))

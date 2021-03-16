@@ -4,7 +4,7 @@ use crate::SatResult;
 /// Simple brute-force solver implementation for use in tests
 pub(crate) fn solve_brute_force(f: &Formula) -> SatResult {
     let num_variables = f.num_variables();
-    assert!(num_variables <= 15); // just for safety; this is a very bad solver!
+    assert!(num_variables <= 20); // just for safety; this is a very bad solver!
 
     fn assignment_for(assignment: u32, x: usize) -> bool {
         assignment & (1 << x) == 0
