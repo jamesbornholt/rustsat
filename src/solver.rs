@@ -1,6 +1,7 @@
 use crate::formula::{Clause, Formula, Literal, Variable};
 use crate::SatResult;
 use log::trace;
+use std::collections::HashMap;
 
 #[derive(Debug)]
 struct Decision {
@@ -24,6 +25,8 @@ enum Assignment {
 
 pub struct Solver {
     clauses: Vec<Clause>,
+    #[allow(unused)] // TODO use to invert canonicalization when outputting a model
+    variable_map: HashMap<Variable, Variable>,
     state: SolverState,
 }
 
@@ -113,10 +116,12 @@ struct Backtrack {
 }
 
 impl Solver {
-    pub fn new(formula: Formula) -> Self {
+    pub fn new(mut formula: Formula) -> Self {
+        let variable_map = formula.canonicalize();
         let state = SolverState::new(&formula);
         Self {
             clauses: formula.into_clauses(),
+            variable_map,
             state,
         }
     }
@@ -200,7 +205,7 @@ impl Solver {
         // (b) return the level right before that one
         // If there are no non-implied decisions, our conflict is at level 0, so we return None
         // (nowhere to backtrack to)
-        let (decision_index, last_decision)= self
+        let (decision_index, last_decision) = self
             .state
             .decisions
             .iter()
@@ -239,5 +244,82 @@ impl Solver {
             self.state.assignment[decision.literal.idx()] = Assignment::Undecided;
         }
         self.state.decision_level = backtrack.level;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::brute_force::solve_brute_force;
+    use crate::formula::{n, p};
+    use crate::solver::Solver;
+    use quickcheck::QuickCheck;
+    use test_env_log::test;
+
+    #[test]
+    fn solve_bcp_sat() {
+        let c1 = Clause::new(vec![p(0), p(1)]);
+        let c2 = Clause::new(vec![n(0)]);
+        let f = Formula::new(vec![c1, c2]);
+
+        let mut solver = Solver::new(f);
+        assert_eq!(solver.solve(), SatResult::Satisfiable);
+    }
+
+    #[test]
+    fn solve_bcp_unsat() {
+        let c1 = Clause::new(vec![p(0), p(1)]);
+        let c2 = Clause::new(vec![n(0)]);
+        let c3 = Clause::new(vec![n(1)]);
+        let f = Formula::new(vec![c1, c2, c3]);
+
+        let mut solver = Solver::new(f);
+        assert_eq!(solver.solve(), SatResult::Unsatisfiable);
+    }
+
+    #[test]
+    fn solve_bcp_decide_sat() {
+        let c1 = Clause::new(vec![p(0), p(1)]);
+        let c2 = Clause::new(vec![p(0)]);
+        let f = Formula::new(vec![c1, c2]);
+
+        let mut solver = Solver::new(f);
+        assert_eq!(solver.solve(), SatResult::Satisfiable);
+    }
+
+    #[test]
+    fn solve_conflict_sat() {
+        let c1 = Clause::new(vec![p(0), p(1), p(2)]);
+        let c2 = Clause::new(vec![n(0), n(1), p(2)]);
+        let c3 = Clause::new(vec![n(1), n(2)]);
+        let f = Formula::new(vec![c1, c2, c3]);
+
+        let mut solver = Solver::new(f);
+        assert_eq!(solver.solve(), SatResult::Satisfiable);
+    }
+
+    #[test]
+    fn solve_conflict_unsat() {
+        let c1 = Clause::new(vec![p(0), p(1)]);
+        let c2 = Clause::new(vec![n(0)]);
+        let c3 = Clause::new(vec![n(1)]);
+        let f = Formula::new(vec![c1, c2, c3]);
+
+        let mut solver = Solver::new(f);
+        assert_eq!(solver.solve(), SatResult::Unsatisfiable);
+    }
+
+    #[test]
+    fn quickcheck_formulas() {
+        fn solver_eq_brute_force(f: Formula) -> bool {
+            let brute_force = solve_brute_force(&f);
+            let solver = Solver::new(f).solve();
+            log::trace!("result = {:?}", solver);
+            solver == brute_force
+        }
+
+        QuickCheck::new()
+            .tests(1000)
+            .quickcheck(solver_eq_brute_force as fn(Formula) -> bool);
     }
 }
