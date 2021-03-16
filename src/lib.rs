@@ -1,5 +1,4 @@
-#[cfg(test)]
-extern crate quickcheck;
+//! A stupid little SAT solver, mostly for fooling around with Rust stuff.
 
 pub mod formula;
 mod solver;

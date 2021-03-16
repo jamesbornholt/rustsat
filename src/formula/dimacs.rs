@@ -23,12 +23,12 @@ pub fn parse<R: Read>(reader: R) -> Result<Formula, DimacsParseError> {
                 let _num_variables = line
                     .next()
                     .and_then(|c| usize::from_str_radix(c, 10).ok())
-                    .ok_or(DimacsParseError::Format("invalid num_variables".into()))?;
+                    .ok_or_else(|| DimacsParseError::Format("invalid num_variables".into()))?;
 
                 num_clauses = Some(
                     line.next()
                         .and_then(|c| usize::from_str_radix(c, 10).ok())
-                        .ok_or(DimacsParseError::Format("invalid num_clauses".into()))?,
+                        .ok_or_else(|| DimacsParseError::Format("invalid num_clauses".into()))?,
                 );
             }
             Some(_) => {
