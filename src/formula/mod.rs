@@ -1,19 +1,19 @@
 pub mod dimacs;
 
 use std::collections::HashMap;
-use std::fmt::Debug;
 use std::fmt::{self, Formatter};
+use std::fmt::{Debug, Display};
 
-#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash, Debug)]
 pub struct Variable(pub usize);
 
-impl Debug for Variable {
+impl Display for Variable {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Literal {
     Positive(Variable),
     Negative(Variable),
@@ -53,18 +53,18 @@ impl Literal {
     }
 }
 
-impl Debug for Literal {
+impl Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Literal::Positive(v) => write!(f, "{:?}", v),
-            Literal::Negative(v) => write!(f, "!{:?}", v),
+            Literal::Positive(v) => write!(f, "{}", v),
+            Literal::Negative(v) => write!(f, "!{}", v),
         }
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Clause {
-    literals: Vec<Literal>,
+    pub literals: Vec<Literal>,
 }
 
 impl Clause {
@@ -79,7 +79,7 @@ impl Clause {
     }
 }
 
-impl Debug for Clause {
+impl Display for Clause {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut first_literal = true;
         write!(f, "(")?;
@@ -88,13 +88,13 @@ impl Debug for Clause {
                 write!(f, " | ")?;
             }
             first_literal = false;
-            write!(f, "{:?}", l)?;
+            write!(f, "{}", l)?;
         }
         write!(f, ")")
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Formula {
     clauses: Vec<Clause>,
 }
@@ -145,7 +145,7 @@ impl Formula {
     }
 }
 
-impl Debug for Formula {
+impl Display for Formula {
     fn fmt(&self, f: &mut Formatter) -> Result<(), fmt::Error> {
         let mut first_clause = true;
         for clause in &self.clauses {
@@ -153,7 +153,7 @@ impl Debug for Formula {
                 write!(f, " & ")?;
             }
             first_clause = false;
-            write!(f, "{:?}", clause)?;
+            write!(f, "{}", clause)?;
         }
         Ok(())
     }
@@ -171,16 +171,16 @@ pub(crate) fn n(x: usize) -> Literal {
 
 #[cfg(test)]
 pub(crate) fn formula_3sat_strategy() -> impl proptest::strategy::Strategy<Value = Formula> {
-    use proptest::strategy::Strategy;
     use proptest::bool::weighted;
     use proptest::collection::vec;
+    use proptest::strategy::Strategy;
 
     const MAX_VARS: u32 = 15;
     const MAX_CLAUSE_FACTOR: u32 = 9;
 
-    (1..MAX_VARS+1).prop_flat_map(|num_vars| {
+    (1..MAX_VARS + 1).prop_flat_map(|num_vars| {
         let max_clauses = MAX_CLAUSE_FACTOR * num_vars;
-        let literal_strategy = ((1..MAX_VARS+1), weighted(0.5)).prop_map(|(v, pos)| {
+        let literal_strategy = ((1..MAX_VARS + 1), weighted(0.5)).prop_map(|(v, pos)| {
             if pos {
                 Literal::Positive(Variable(v as usize))
             } else {

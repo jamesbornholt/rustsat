@@ -22,6 +22,9 @@ pub(crate) fn solve_brute_force(f: &Formula) -> SatResult {
             continue 'search;
         }
         // if we got here, every clause was satisfied, so we're done and satisfiable
+        // for i in 0..num_variables {
+        //     println!("{}: {:?}", i, assignment_for(assignment, i));
+        // }
         return SatResult::Satisfiable;
     }
     // no assignment is valid

@@ -95,13 +95,13 @@ impl SolverState {
         assert!(reason.is_some() || self.decision_level > DecisionLevel(0));
 
         trace!(
-            "{} {:?} at level {:?}",
+            "{} {} at level {}",
             match reason {
-                Some(c) => format!("implied by {}", c.0),
+                Some(c) => format!("implied({})", c.0),
                 None => "decision".to_string(),
             },
             literal,
-            self.decision_level
+            self.decision_level.0
         );
 
         self.trail.push(*literal.variable());
@@ -160,7 +160,7 @@ impl Solver {
                 Some(literal) => {
                     self.state.assign(&literal, None);
                     while let BcpResult::Conflict(reason) = self.bcp() {
-                        match self.analyze_conflict(reason) {
+                        match self.analyze_conflict2(reason) {
                             None => return SatResult::Unsatisfiable,
                             Some(backtrack) => self.backtrack(backtrack),
                         }
@@ -269,10 +269,18 @@ impl Solver {
     }
 
     fn analyze_conflict2(&mut self, reason: ClauseIdx) -> Option<Backtrack> {
+        if self.state.decision_level == DecisionLevel(0) {
+            return None;
+        }
+
+        // #[cfg(test)]
+        // let _ = self.dump_trail(reason);
+
         let mut reason = &self.clauses[reason.0];
         let mut conflict_clause = vec![];
         let mut seen = vec![false; self.state.variables.len()];
         let mut frontier = 0;
+        let mut trail_end = self.state.trail.len() - 1;
         let first_uip = loop {
             for l in reason.literals() {
                 if seen[l.idx()] {
@@ -289,36 +297,109 @@ impl Solver {
                 }
             }
 
-            // TODO can track trail end across iterations of outer loop
-            let uip = self.state.trail.iter().rev().filter(|v| seen[v.0]).next().expect("no seen variables left");
+            // TODO ugly
+            let uip = loop {
+                let v = self.state.trail[trail_end];
+                let old_end = trail_end;
+                trail_end = trail_end.saturating_sub(1);
+                if seen[v.0] {
+                    break v;
+                }
+                debug_assert_ne!(old_end, 0);
+            };
+
             debug_assert_eq!(self.state.variables[uip.0].decision_level, self.state.decision_level);
 
-            log::trace!("frontier = {}", frontier);
             frontier -= 1;
             if frontier == 0 {
-                break self.state.variables[uip.0].literal(*uip);
+                break self.state.variables[uip.0].literal(uip);
             } else {
-                let clause_idx = self.state.variables[uip.0].reason.expect("uip should be an implied variable");
+                let clause_idx = self.state.variables[uip.0]
+                    .reason
+                    .expect("uip should be an implied variable");
                 reason = &self.clauses[clause_idx.0];
             }
         };
         conflict_clause.push(first_uip.negated());
         let max_decision_level = self.state.variables[first_uip.idx()].decision_level;
 
-        log::trace!("conflict clause {:?}", conflict_clause);
+        let decision_level = conflict_clause
+            .iter()
+            .map(|l| self.state.variables[l.idx()].decision_level)
+            .filter(|l| *l < max_decision_level)
+            .max()
+            .unwrap_or(DecisionLevel(0));
+        let decision_index = self
+            .state
+            .trail
+            .iter()
+            .position(|v| self.state.variables[v.0].decision_level > decision_level)
+            .unwrap_or_else(|| self.state.trail.len());
 
-        let decision_level = conflict_clause.iter().map(|l| self.state.variables[l.idx()].decision_level).filter(|l| *l < max_decision_level).max().unwrap_or(DecisionLevel(0));
-        let decision_index = self.state.trail.iter().rposition(|v| self.state.variables[v.0].decision_level <= decision_level).map(|idx| idx + 1).unwrap_or(0);
-
-        self.clauses.push(Clause::new(conflict_clause));
+        let conflict_clause = Clause::new(conflict_clause);
+        log::trace!(
+            "conflict clause {}, backtrack to level {}",
+            conflict_clause,
+            decision_level.0
+        );
+        self.clauses.push(conflict_clause);
 
         Some(Backtrack {
             level: decision_level,
-            decision_index
+            decision_index,
         })
     }
 
+    #[cfg(test)]
+    fn dump_trail(&self, reason_idx: ClauseIdx) -> Result<(), std::io::Error> {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let file = NamedTempFile::new()?;
+        let (mut f, path) = file.keep()?;
+
+        writeln!(f, "digraph cc {{")?;
+        for v in &self.state.trail {
+            let name = format!("x{}", v.0);
+            let vs = &self.state.variables[v.0];
+            let label = format!(
+                "{}{}@{}",
+                if vs.assignment == Assignment::True { "" } else { "!" },
+                v.0,
+                vs.decision_level.0
+            );
+            let style = if vs.reason.is_none() { ",peripheries=2" } else { "" };
+            writeln!(f, "  {} [label=\"{}\"{}];", name, label, style)?;
+
+            if let Some(idx) = vs.reason {
+                let reason = &self.clauses[idx.0];
+                for l in reason.literals() {
+                    if l.variable() != v {
+                        writeln!(f, "  x{} -> x{} [label=\"c{}\"];", l.variable().0, v.0, idx.0)?;
+                    }
+                }
+            }
+        }
+
+        writeln!(f, "  k;")?;
+        let reason = &self.clauses[reason_idx.0];
+        for l in reason.literals() {
+            writeln!(f, "  x{} -> k [label=\"c{}\"];", l.variable().0, reason_idx.0)?;
+        }
+
+        writeln!(f, "}}")?;
+
+        println!("dumped to {}", path.display());
+
+        Ok(())
+    }
+
     fn backtrack(&mut self, backtrack: Backtrack) {
+        log::trace!(
+            "backtrack: dropping to {} from {}",
+            backtrack.decision_index,
+            self.state.trail.len()
+        );
         assert!(backtrack.decision_index < self.state.trail.len());
         let dropped = self.state.trail.split_off(backtrack.decision_index);
         for variable in &dropped {
@@ -332,10 +413,10 @@ impl Solver {
 mod tests {
     use super::*;
     use crate::brute_force::solve_brute_force;
-    use crate::formula::{n, p, formula_3sat_strategy};
+    use crate::formula::{formula_3sat_strategy, n, p};
     use crate::solver::Solver;
-    use test_env_log::test;
     use proptest::prelude::*;
+    use test_env_log::test;
 
     #[test]
     fn solve_bcp_sat() {
@@ -401,6 +482,46 @@ mod tests {
 
         let mut solver = Solver::new(f);
         assert_eq!(solver.solve(), SatResult::Satisfiable);
+    }
+
+    #[test]
+    fn solve_failing() {
+        use Literal::*;
+
+        let mut f = Formula::new(vec![
+            Clause {
+                literals: vec![Negative(Variable(1)), Positive(Variable(1)), Negative(Variable(7))],
+            },
+            Clause {
+                literals: vec![Negative(Variable(10)), Negative(Variable(13)), Negative(Variable(1))],
+            },
+            Clause {
+                literals: vec![Negative(Variable(7)), Negative(Variable(7)), Negative(Variable(10))],
+            },
+            Clause {
+                literals: vec![Positive(Variable(6)), Negative(Variable(9)), Negative(Variable(15))],
+            },
+            Clause {
+                literals: vec![Negative(Variable(2)), Negative(Variable(1)), Negative(Variable(1))],
+            },
+            Clause {
+                literals: vec![Negative(Variable(6)), Negative(Variable(7)), Negative(Variable(15))],
+            },
+            Clause {
+                literals: vec![Positive(Variable(9)), Positive(Variable(10)), Positive(Variable(6))],
+            },
+            Clause {
+                literals: vec![Negative(Variable(13)), Negative(Variable(7)), Negative(Variable(9))],
+            },
+            Clause {
+                literals: vec![Positive(Variable(9)), Positive(Variable(15)), Positive(Variable(15))],
+            },
+        ]);
+        f.canonicalize();
+        println!("{}", f);
+
+        let brute_force = solve_brute_force(&f);
+        assert_eq!(Solver::new(f).solve(), brute_force);
     }
 
     proptest! {

@@ -46,7 +46,7 @@ pub fn parse<R: Read>(reader: R) -> Result<Formula, DimacsParseError> {
                                 clauses.push(Clause::new(clause));
                                 clause = vec![];
                             }
-                        },
+                        }
                     }
                 }
 
