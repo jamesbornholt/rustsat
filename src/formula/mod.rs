@@ -1,7 +1,5 @@
 pub mod dimacs;
 
-#[cfg(test)]
-use quickcheck::{Arbitrary, Gen};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::{self, Formatter};
@@ -172,37 +170,33 @@ pub(crate) fn n(x: usize) -> Literal {
 }
 
 #[cfg(test)]
-impl Arbitrary for Formula {
-    fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        const MAX_VARS: u32 = 5;
-        const MAX_CLAUSE_FACTOR: u32 = 9;
+pub(crate) fn formula_3sat_strategy() -> impl proptest::strategy::Strategy<Value = Formula> {
+    use proptest::strategy::Strategy;
+    use proptest::bool::weighted;
+    use proptest::collection::vec;
 
-        let num_vars = g.next_u32() % MAX_VARS + 1;
-        let clause_factor = g.next_u32() % MAX_CLAUSE_FACTOR + 1;
-        let num_clauses = num_vars * clause_factor;
+    const MAX_VARS: u32 = 15;
+    const MAX_CLAUSE_FACTOR: u32 = 9;
 
-        let mut f = Formula::new((0..num_clauses).map(|_| {
-            let clause_size = 3;
-            Clause::new((0..clause_size).map(|_| {
-                let var = Variable((g.next_u32() % num_vars) as usize);
-                if g.next_u32() % 2 == 0 {
-                    Literal::Positive(var)
-                } else {
-                    Literal::Negative(var)
-                }
-            }))
-        }));
-
-        f.canonicalize();
-        f
-    }
+    (1..MAX_VARS+1).prop_flat_map(|num_vars| {
+        let max_clauses = MAX_CLAUSE_FACTOR * num_vars;
+        let literal_strategy = ((1..MAX_VARS+1), weighted(0.5)).prop_map(|(v, pos)| {
+            if pos {
+                Literal::Positive(Variable(v as usize))
+            } else {
+                Literal::Negative(Variable(v as usize))
+            }
+        });
+        let clause_strategy = vec(literal_strategy, 3).prop_map(Clause::new);
+        vec(clause_strategy, 1..max_clauses as usize).prop_map(Formula::new)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::brute_force::solve_brute_force;
-    use quickcheck::QuickCheck;
+    use proptest::prelude::*;
 
     #[test]
     fn test_canonicalize() {
@@ -228,18 +222,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_canonicalize_quickcheck_equisatisfiable() {
-        fn equisatisfiable(f: Formula) -> bool {
+    proptest! {
+        #[test]
+        fn proptest_canonicalize_equisatisfiable(f in formula_3sat_strategy()) {
             let mut f2 = f.clone();
             f2.canonicalize();
             let sol1 = solve_brute_force(&f);
             let sol2 = solve_brute_force(&f2);
-            sol1 == sol2
+            assert_eq!(sol1, sol2);
         }
-
-        QuickCheck::new()
-            .tests(100)
-            .quickcheck(equisatisfiable as fn(Formula) -> bool);
     }
 }

@@ -160,7 +160,7 @@ impl Solver {
                 Some(literal) => {
                     self.state.assign(&literal, None);
                     while let BcpResult::Conflict(reason) = self.bcp() {
-                        match self.analyze_conflict2(reason) {
+                        match self.analyze_conflict(reason) {
                             None => return SatResult::Unsatisfiable,
                             Some(backtrack) => self.backtrack(backtrack),
                         }
@@ -332,10 +332,10 @@ impl Solver {
 mod tests {
     use super::*;
     use crate::brute_force::solve_brute_force;
-    use crate::formula::{n, p};
+    use crate::formula::{n, p, formula_3sat_strategy};
     use crate::solver::Solver;
-    use quickcheck::QuickCheck;
     use test_env_log::test;
+    use proptest::prelude::*;
 
     #[test]
     fn solve_bcp_sat() {
@@ -403,18 +403,13 @@ mod tests {
         assert_eq!(solver.solve(), SatResult::Satisfiable);
     }
 
-    #[test]
-    fn quickcheck_formulas() {
-        fn solver_eq_brute_force(f: Formula) -> bool {
-            println!("{:?}", f);
+    proptest! {
+        #[test]
+        fn proptest_solve(f in formula_3sat_strategy()) {
             let brute_force = solve_brute_force(&f);
             let solver = Solver::new(f).solve();
             log::trace!("result = {:?}", solver);
-            solver == brute_force
+            assert_eq!(solver, brute_force);
         }
-
-        QuickCheck::new()
-            .tests(1000)
-            .quickcheck(solver_eq_brute_force as fn(Formula) -> bool);
     }
 }
