@@ -160,7 +160,7 @@ impl Solver {
                 Some(literal) => {
                     self.state.assign(&literal, None);
                     while let BcpResult::Conflict(reason) = self.bcp() {
-                        match self.analyze_conflict2(reason) {
+                        match self.analyze_conflict(reason) {
                             None => return SatResult::Unsatisfiable,
                             Some(backtrack) => self.backtrack(backtrack),
                         }
@@ -217,141 +217,168 @@ impl Solver {
         None
     }
 
+    /// Conflict analysis adds a new conflict clause to the clause set and returns information about
+    /// the next backtracking step to take. If no more backtracking is possible, the problem is
+    /// unsat.
     fn analyze_conflict(&mut self, reason: ClauseIdx) -> Option<Backtrack> {
-        // Invariant: self.bcp() returned conflict
-        // Invariant: self.state.decisions is not empty, contains at least one non-implied decision,
-        //            and ends with at least one implied decision
-
-        // TODO better conflict analysis
-        // for now: the most recent decision was wrong. so we:
-        // (a) generate a conflict clause ruling out everything up to and including that decision
-        //     (and therefore that clause will become unit immediately after backtracking)
-        // (b) return the level right before that one
-        // If there are no non-implied decisions, our conflict is at level 0, so we return None
-        // (nowhere to backtrack to)
-        let decision_index = self
-            .state
-            .trail
-            .iter()
-            .rposition(|var| self.state.variables[var.0].reason.is_none())?;
-        let last_decision_variable = self.state.trail[decision_index];
-        let last_decision_level = self.state.variables[last_decision_variable.0].decision_level;
-
-        // The conflict clause negates every non-implied decision up to and including the latest one
-        let conflict_clause = self
-            .state
-            .trail
-            .iter()
-            .take(decision_index + 1)
-            .filter(|v| self.state.variables[v.0].reason.is_none())
-            .map(|v| {
-                if self.state.variables[v.0].assignment == Assignment::True {
-                    Literal::Negative(*v)
-                } else {
-                    Literal::Positive(*v)
-                }
-            });
-        let conflict_clause = Clause::new(conflict_clause);
-
-        trace!(
-            "backtracking to {:?}, learned clause {:?}",
-            last_decision_level.0 - 1,
-            conflict_clause
-        );
-        self.clauses.push(conflict_clause);
-
-        // All non-implied decisions are above level 0, so the subtraction is safe
-        assert!(last_decision_level > DecisionLevel(0));
-        Some(Backtrack {
-            level: DecisionLevel(last_decision_level.0 - 1),
-            decision_index,
-        })
-    }
-
-    fn analyze_conflict2(&mut self, reason: ClauseIdx) -> Option<Backtrack> {
         if self.state.decision_level == DecisionLevel(0) {
             return None;
         }
 
-        // #[cfg(test)]
-        // let _ = self.dump_trail(reason);
+        // # Conflict analysis, in theory
+        //
+        // The conflict analysis works by finding the first UIP of the conflict graph, building the
+        // conflict clause along the way. In the terms of [KS16, Algorithm 2.2.2], this looks like:
+        //
+        //    cl = current_conflicting_clause;
+        //    while !stop_criterion_met(cl) {
+        //        lit = last_assigned_literal(cl);
+        //        var = variable_of_literal(lit);
+        //        ante = antecedent(lit);
+        //        cl = resolve(cl, ante, var);
+        //    }
+        //    add_clause_to_database(cl);
+        //    return clause_asserting_level(cl);  // 2nd highest decision level in cl
+        //
+        // where `stop_criterion_met` returns true iff `cl` contains the negation of the first UIP
+        // as its single literal at the current decision level. This stopping criterion ensures that
+        // this negated literal becomes asserted immediately after backtracking.
+        //
+        // # Conflict analysis, in practice
+        //
+        // We could use a heavyweight graph analysis to find the first UIP and then run the above
+        // algorithm literally. But we'd like to avoid materializing the entire conflict graph to
+        // discover the first UIP. In fact, in the case of the conflict graph, we can find the first
+        // UIP in linear time. We'd also like to avoid explicitly doing the binary resolution step.
+        //
+        // To achieve these goals, notice a few properties of the algorithm above. The algorithm
+        // eventually visits every vertex in the conflict graph that lies on any path from the first
+        // UIP to the conflict node, in the sense that every such vertex will at some iteration be
+        // the value of `var`. When the algorithm visits `var`, it has the effect of *removing*
+        // `var` from the conflict clause `cl` by binary resolution. Every such vertex is at the
+        // same decision level as the first UIP, which is at the current decision level. So rather
+        // than explicitly performing binary resolution at each step, we can compute the final
+        // conflict clause `cl` by just adding to it any variable we encounter in `ante` that is
+        // below the current decision level.
+        //
+        // To find the first UIP, we start from the conflict node, and keep track of a "frontier" of
+        // vertices in the graph at the current decision level that we haven't yet seen. When the
+        // frontier is non-empty, we choose the next vertex to explore in reverse decision order, to
+        // ensure we're doing a breadth-first traversal. When the frontier is empty, it means we've
+        // explored every path from the conflict node to the current vertex, and therefore the
+        // current vertex is the first UIP.
+        //
+        // [KS16]: Decision Procedures, Kroening & Strichman, 2nd edition
 
         let mut reason = &self.clauses[reason.0];
         let mut conflict_clause = vec![];
         let mut seen = vec![false; self.state.variables.len()];
         let mut frontier = 0;
-        let mut trail_end = self.state.trail.len() - 1;
+        let mut trail = self.state.trail.iter().rev();
         let first_uip = loop {
+            // Consider all literals in the current antecedent that we haven't yet seen
             for l in reason.literals() {
                 if seen[l.idx()] {
                     continue;
                 }
                 seen[l.idx()] = true;
 
+                // If the literal is below our decision level, it will end up in the conflict clause
+                // because binary resolution will never remove it. Otherwise, we need to add it to
+                // the frontier of vertexes to explore.
                 let var = &self.state.variables[l.idx()];
                 if var.decision_level < self.state.decision_level {
                     conflict_clause.push(l.clone());
                 } else {
-                    debug_assert_eq!(var.decision_level, self.state.decision_level);
+                    debug_assert_eq!(
+                        var.decision_level, self.state.decision_level,
+                        "no decisions above the current level"
+                    );
                     frontier += 1;
                 }
             }
 
-            // TODO ugly
-            let uip = loop {
-                let v = self.state.trail[trail_end];
-                let old_end = trail_end;
-                trail_end = trail_end.saturating_sub(1);
-                if seen[v.0] {
-                    break v;
-                }
-                debug_assert_ne!(old_end, 0);
-            };
-
-            debug_assert_eq!(self.state.variables[uip.0].decision_level, self.state.decision_level);
-
+            // Current variable has now been considered, so remove it from the frontier
             frontier -= 1;
+
+            // Find the next variable in reverse decision order. Note the trickiness here: `trail`
+            // is mutated by this call so that we can persist our current position in the trail
+            // across loop iterations.
+            let next_var = trail
+                .by_ref()
+                .filter(|v| seen[v.0])
+                .next()
+                .expect("ran out of trail variables before finding uip");
+
+            debug_assert_eq!(
+                self.state.variables[next_var.0].decision_level, self.state.decision_level,
+                "shouldn't go beyond the current decision level"
+            );
+
+            // If the frontier is empty, then the `next_var` is the first UIP, as every path back
+            // from the conflict node has converged to it. Otherwise, the `next_var` tells us our
+            // next antecedent.
             if frontier == 0 {
-                break self.state.variables[uip.0].literal(uip);
+                break self.state.variables[next_var.0].literal(*next_var);
             } else {
-                let clause_idx = self.state.variables[uip.0]
+                let clause_idx = self.state.variables[next_var.0]
                     .reason
-                    .expect("uip should be an implied variable");
+                    .expect("next_var should be an implied variable");
                 reason = &self.clauses[clause_idx.0];
             }
         };
         conflict_clause.push(first_uip.negated());
-        let max_decision_level = self.state.variables[first_uip.idx()].decision_level;
 
-        let decision_level = conflict_clause
+        // We backtrack to the second highest decision level in the conflict clause. By construction,
+        // the UIP at the highest decision level.
+        let max_decision_level = self.state.variables[first_uip.idx()].decision_level;
+        let backtrack_to_level = conflict_clause
             .iter()
             .map(|l| self.state.variables[l.idx()].decision_level)
             .filter(|l| *l < max_decision_level)
             .max()
             .unwrap_or(DecisionLevel(0));
-        let decision_index = self
+        // We'll undo all decisions in the trail that come at or after the backtrack decision level
+        let new_trail_end = self
             .state
             .trail
             .iter()
-            .position(|v| self.state.variables[v.0].decision_level > decision_level)
+            .position(|v| self.state.variables[v.0].decision_level > backtrack_to_level)
             .unwrap_or_else(|| self.state.trail.len());
 
         let conflict_clause = Clause::new(conflict_clause);
+
         log::trace!(
             "conflict clause {}, backtrack to level {}",
             conflict_clause,
-            decision_level.0
+            backtrack_to_level.0
         );
+
         self.clauses.push(conflict_clause);
 
         Some(Backtrack {
-            level: decision_level,
-            decision_index,
+            level: backtrack_to_level,
+            decision_index: new_trail_end,
         })
     }
 
+    fn backtrack(&mut self, backtrack: Backtrack) {
+        log::trace!(
+            "backtrack: dropping to {} from {}",
+            backtrack.decision_index,
+            self.state.trail.len()
+        );
+        assert!(backtrack.decision_index < self.state.trail.len());
+        let dropped = self.state.trail.split_off(backtrack.decision_index);
+        for variable in &dropped {
+            self.state.variables[variable.0].clear();
+        }
+        self.state.decision_level = backtrack.level;
+    }
+
     #[cfg(test)]
-    fn dump_trail(&self, reason_idx: ClauseIdx) -> Result<(), std::io::Error> {
+    #[allow(unused)]
+    fn dump_conflict_graph(&self, reason_idx: ClauseIdx) -> Result<(), std::io::Error> {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
@@ -393,27 +420,13 @@ impl Solver {
 
         Ok(())
     }
-
-    fn backtrack(&mut self, backtrack: Backtrack) {
-        log::trace!(
-            "backtrack: dropping to {} from {}",
-            backtrack.decision_index,
-            self.state.trail.len()
-        );
-        assert!(backtrack.decision_index < self.state.trail.len());
-        let dropped = self.state.trail.split_off(backtrack.decision_index);
-        for variable in &dropped {
-            self.state.variables[variable.0].clear();
-        }
-        self.state.decision_level = backtrack.level;
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::brute_force::solve_brute_force;
-    use crate::formula::{formula_3sat_strategy, n, p};
+    use crate::formula::{formula_3sat_strategy, formula_wide_strategy, n, p};
     use crate::solver::Solver;
     use proptest::prelude::*;
     use test_env_log::test;
@@ -471,62 +484,17 @@ mod tests {
         assert_eq!(solver.solve(), SatResult::Unsatisfiable);
     }
 
-    #[test]
-    fn solve_simple() {
-        // (!0 | !0 | !0) & (!0 | !1 | !1) & (!1 | 2 | 3) & (!1 | 3 | 3)
-        let c1 = Clause::new(vec![n(0), n(0), n(0)]);
-        let c2 = Clause::new(vec![n(0), n(1), n(1)]);
-        let c3 = Clause::new(vec![n(1), p(2), p(3)]);
-        let c4 = Clause::new(vec![n(1), p(3), n(3)]);
-        let f = Formula::new(vec![c1, c2, c3, c4]);
-
-        let mut solver = Solver::new(f);
-        assert_eq!(solver.solve(), SatResult::Satisfiable);
-    }
-
-    #[test]
-    fn solve_failing() {
-        use Literal::*;
-
-        let mut f = Formula::new(vec![
-            Clause {
-                literals: vec![Negative(Variable(1)), Positive(Variable(1)), Negative(Variable(7))],
-            },
-            Clause {
-                literals: vec![Negative(Variable(10)), Negative(Variable(13)), Negative(Variable(1))],
-            },
-            Clause {
-                literals: vec![Negative(Variable(7)), Negative(Variable(7)), Negative(Variable(10))],
-            },
-            Clause {
-                literals: vec![Positive(Variable(6)), Negative(Variable(9)), Negative(Variable(15))],
-            },
-            Clause {
-                literals: vec![Negative(Variable(2)), Negative(Variable(1)), Negative(Variable(1))],
-            },
-            Clause {
-                literals: vec![Negative(Variable(6)), Negative(Variable(7)), Negative(Variable(15))],
-            },
-            Clause {
-                literals: vec![Positive(Variable(9)), Positive(Variable(10)), Positive(Variable(6))],
-            },
-            Clause {
-                literals: vec![Negative(Variable(13)), Negative(Variable(7)), Negative(Variable(9))],
-            },
-            Clause {
-                literals: vec![Positive(Variable(9)), Positive(Variable(15)), Positive(Variable(15))],
-            },
-        ]);
-        f.canonicalize();
-        println!("{}", f);
-
-        let brute_force = solve_brute_force(&f);
-        assert_eq!(Solver::new(f).solve(), brute_force);
-    }
-
     proptest! {
         #[test]
-        fn proptest_solve(f in formula_3sat_strategy()) {
+        fn proptest_solve_3sat(f in formula_3sat_strategy()) {
+            let brute_force = solve_brute_force(&f);
+            let solver = Solver::new(f).solve();
+            log::trace!("result = {:?}", solver);
+            assert_eq!(solver, brute_force);
+        }
+
+        #[test]
+        fn proptest_solve_wide(f in formula_wide_strategy()) {
             let brute_force = solve_brute_force(&f);
             let solver = Solver::new(f).solve();
             log::trace!("result = {:?}", solver);

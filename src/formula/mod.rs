@@ -193,6 +193,29 @@ pub(crate) fn formula_3sat_strategy() -> impl proptest::strategy::Strategy<Value
 }
 
 #[cfg(test)]
+pub(crate) fn formula_wide_strategy() -> impl proptest::strategy::Strategy<Value = Formula> {
+    use proptest::bool::weighted;
+    use proptest::collection::vec;
+    use proptest::strategy::Strategy;
+
+    const MAX_VARS: u32 = 15;
+    const MAX_CLAUSE_FACTOR: u32 = 9;
+
+    (1..MAX_VARS + 1).prop_flat_map(|num_vars| {
+        let max_clauses = MAX_CLAUSE_FACTOR * num_vars;
+        let literal_strategy = ((1..MAX_VARS + 1), weighted(0.5)).prop_map(|(v, pos)| {
+            if pos {
+                Literal::Positive(Variable(v as usize))
+            } else {
+                Literal::Negative(Variable(v as usize))
+            }
+        });
+        let clause_strategy = vec(literal_strategy, 1..((num_vars+1) as usize)).prop_map(Clause::new);
+        vec(clause_strategy, 1..max_clauses as usize).prop_map(Formula::new)
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::brute_force::solve_brute_force;
