@@ -174,7 +174,7 @@ pub(crate) fn n(x: usize) -> Literal {
 #[cfg(test)]
 impl Arbitrary for Formula {
     fn arbitrary<G: Gen>(g: &mut G) -> Self {
-        const MAX_VARS: u32 = 15;
+        const MAX_VARS: u32 = 5;
         const MAX_CLAUSE_FACTOR: u32 = 9;
 
         let num_vars = g.next_u32() % MAX_VARS + 1;
