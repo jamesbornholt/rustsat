@@ -89,7 +89,10 @@ impl SolverState {
 
         trace!(
             "{} {:?} at level {:?}",
-            if reason.is_some() { "implied" } else { "decision" },
+            match reason {
+                Some(c) => format!("implied by {}", c.0),
+                None => "decision".to_string(),
+            },
             literal,
             self.decision_level
         );

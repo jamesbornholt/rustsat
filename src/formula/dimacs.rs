@@ -7,6 +7,8 @@ pub fn parse<R: Read>(reader: R) -> Result<Formula, DimacsParseError> {
     let mut clauses = vec![];
     let mut num_clauses = None;
 
+    let mut clause = vec![];
+
     for line in reader.lines() {
         let line = line?;
         let mut line = line.split_whitespace().peekable();
@@ -36,15 +38,16 @@ pub fn parse<R: Read>(reader: R) -> Result<Formula, DimacsParseError> {
                     return Err(DimacsParseError::Format("missing 'p' line before clauses".into()));
                 }
 
-                let mut clause = vec![];
                 for x in line {
                     match parse_literal(x)? {
                         Some(l) => clause.push(l),
-                        None => break,
+                        None => {
+                            if !clause.is_empty() {
+                                clauses.push(Clause::new(clause));
+                                clause = vec![];
+                            }
+                        },
                     }
-                }
-                if !clause.is_empty() {
-                    clauses.push(Clause::new(clause));
                 }
 
                 if clauses.len() >= num_clauses.unwrap() {
@@ -149,5 +152,26 @@ p cnf 16 18
         let r = solver.solve();
 
         assert_eq!(r, SatResult::Satisfiable);
+    }
+
+    #[test]
+    fn parse_cnf_multiline_clause() {
+        let cnf = "c hello
+p cnf 3 2
+1 -3 0
+2 3
+-1 0";
+        let f = parse(cnf.as_bytes()).expect("failed to parse");
+
+        assert_eq!(f.clauses().count(), 2);
+
+        assert_eq!(
+            f.clauses().nth(0).unwrap().literals().cloned().collect::<Vec<_>>(),
+            vec![p(1), n(3)]
+        );
+        assert_eq!(
+            f.clauses().nth(1).unwrap().literals().cloned().collect::<Vec<_>>(),
+            vec![p(2), p(3), n(1)]
+        );
     }
 }
