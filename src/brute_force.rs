@@ -1,7 +1,7 @@
 use crate::formula::Formula;
 use crate::SatResult;
 
-/// Simple brute-force solver implementation for use in tests
+/// Simple brute-force solver implementation for use as ground truth in tests
 pub(crate) fn solve_brute_force(f: &Formula) -> SatResult {
     let num_variables = f.num_variables();
     assert!(num_variables <= 20); // just for safety; this is a very bad solver!
